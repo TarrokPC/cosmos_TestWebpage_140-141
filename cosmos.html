@@ -1246,40 +1246,49 @@ document.querySelectorAll('.nav-dot')[0]?.classList.add('active');
   }
 
   async function tryJPLFallback(){
-    // JPL Small Body Database Close Approach Data — no API key needed
+    // JPL SBDB Close Approach API — no key needed, but max 1 concurrent request
     const today = new Date(), end = new Date(today);
     end.setDate(end.getDate()+7);
-    const url = `https://ssd-api.jpl.nasa.gov/cad.api?dist-max=0.05&date-min=${fmtDate(today)}&date-max=${fmtDate(end)}&sort=dist&limit=20&body=Earth`;
-    const res  = await fetch(url);
+    const base = `https://ssd-api.jpl.nasa.gov/cad.api?neo=true&date-min=${fmtDate(today)}&date-max=${fmtDate(end)}&dist-max=0.05&sort=date&limit=30`;
+
+    // Request 1: all NEO close approaches in window
+    const res = await fetch(base);
     if(!res.ok) throw new Error('JPL HTTP '+res.status);
     const data = await res.json();
+    if(!data.data || !data.fields) throw new Error('JPL: unexpected response shape');
 
-    // Also fetch PHA (potentially hazardous) list to tag entries
-    const phaRes  = await fetch(`https://ssd-api.jpl.nasa.gov/cad.api?dist-max=0.05&date-min=${fmtDate(today)}&date-max=${fmtDate(end)}&pha=true&body=Earth`);
-    const phaData = phaRes.ok ? await phaRes.json() : {data:[]};
-    const phaNames = new Set((phaData.data||[]).map(r=>r[0]));
+    // Request 2: PHAs only — sequential (JPL rejects concurrent calls)
+    await new Promise(r => setTimeout(r, 400)); // small gap
+    const phaRes  = await fetch(base + '&pha=true');
+    const phaData = phaRes.ok ? await phaRes.json() : { data: [] };
+    const phaSet  = new Set((phaData.data||[]).map(r => r[0])); // set of des strings
 
-    const fields = data.fields;
-    const iDes  = fields.indexOf('des');
-    const iCd   = fields.indexOf('cd');    // "2025-Mar-11 14:22"
-    const iDist = fields.indexOf('dist');  // AU
-    const iVrel = fields.indexOf('v_rel'); // km/s
+    // Locate fields by name (order can vary between API versions)
+    const f     = data.fields;
+    const iDes  = f.indexOf('des');
+    const iCd   = f.indexOf('cd');    // "2026-Mar-11 14:22"  (calendar date)
+    const iDist = f.indexOf('dist');  // AU
+    const iVrel = f.indexOf('v_rel'); // km/s
+    if(iDes<0 || iCd<0 || iDist<0 || iVrel<0)
+      throw new Error(`JPL: missing expected fields. Got: ${f.join(',')}`);
+
+    const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
+                    Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
 
     const neos = (data.data||[]).map(row => {
-      // Parse JPL date "2025-Mar-11 14:22" → "2025-03-11"
-      const cdRaw = row[iCd]||'';
-      let date = cdRaw.split(' ')[0]; // "2025-Mar-11"
-      const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-      date = date.replace(/-([A-Za-z]+)-/,(_,m)=>`-${months[m]||'01'}-`);
+      // "2026-Mar-11 14:22" → "2026-03-11"
+      const cdRaw = (row[iCd]||'').split(' ')[0];
+      const date  = cdRaw.replace(/-([A-Za-z]+)-/, (_, m) => `-${months[m]||'01'}-`);
       return {
         name:      row[iDes],
         date,
         distKm:    parseFloat(row[iDist]) * AU_KM,
         velKmh:    parseFloat(row[iVrel]) * 3600,
-        hazardous: phaNames.has(row[iDes]),
+        hazardous: phaSet.has(row[iDes]),
       };
-    });
-    neos.sort((a,b)=>new Date(a.date)-new Date(b.date)||a.distKm-b.distKm);
+    }).filter(n => n.distKm > 0 && n.velKmh > 0);
+
+    neos.sort((a,b) => new Date(a.date)-new Date(b.date) || a.distKm-b.distKm);
     return neos;
   }
 
