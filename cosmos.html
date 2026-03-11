@@ -1073,88 +1073,229 @@ document.querySelectorAll('.nav-dot')[0]?.classList.add('active');
   resize();draw();addEventListener('resize',()=>{resize();recomp();});
 })();
 
-/* ═══ APOD ═══════════════════════════════════ */
+/* ═══ APOD ═══════════════════════════════════
+   1. Try NASA DEMO_KEY
+   2. Fallback: fetch & parse apod.nasa.gov HTML via allorigins proxy
+═══════════════════════════════════════════ */
 (async function(){
-  try{
-    const res=await fetch('https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY');
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const d=await res.json();
-    if(d.code===429||d.error)throw new Error('rate_limit');
-    document.getElementById('apod-date').textContent=d.date||'';
-    document.getElementById('apod-date-lbl').textContent=d.date||'Today';
-    document.getElementById('apod-title').textContent=d.title||'';
-    const expl=d.explanation||'';
-    document.getElementById('apod-text').textContent=expl.length>480?expl.slice(0,480)+'…':expl;
-    document.getElementById('apod-text').style.cssText='font-style:normal;font-size:.95rem;color:var(--text)';
-    if(d.copyright)document.getElementById('apod-credit').textContent='© '+d.copyright.trim();
-    if(d.media_type==='image'){
-      const img=document.getElementById('apod-img');
-      img.onload=()=>img.classList.add('loaded');
-      img.src=d.url;
-      document.getElementById('apod-placeholder').style.display='none';
-    } else if(d.media_type==='video'){
-      const ytM=(d.url||'').match(/(?:youtube\.com\/embed\/|youtu\.be\/)([^?&]+)/);
-      if(ytM){const img=document.getElementById('apod-img');img.onload=()=>img.classList.add('loaded');img.src=`https://img.youtube.com/vi/${ytM[1]}/hqdefault.jpg`;document.getElementById('apod-placeholder').style.display='none';}
-      const a=document.createElement('a');a.className='apod-video-link';a.href=d.url;a.target='_blank';a.rel='noopener';a.innerHTML='▶ Watch Video';
+
+  function renderAPOD(d){
+    document.getElementById('apod-date').textContent = d.date||'';
+    document.getElementById('apod-date-lbl').textContent = d.date||'Today';
+    document.getElementById('apod-title').textContent = d.title||'';
+    const expl = d.explanation||'';
+    document.getElementById('apod-text').textContent = expl.length>520 ? expl.slice(0,520)+'…' : expl;
+    document.getElementById('apod-text').style.cssText = 'font-style:normal;font-size:.95rem;color:var(--text)';
+    if(d.copyright) document.getElementById('apod-credit').textContent = '© '+d.copyright.trim();
+    if(d.imgUrl){
+      const img = document.getElementById('apod-img');
+      img.onload = () => img.classList.add('loaded');
+      img.src = d.imgUrl;
+      document.getElementById('apod-placeholder').style.display = 'none';
+    }
+    if(d.videoUrl){
+      const a = document.createElement('a');
+      a.className='apod-video-link'; a.href=d.videoUrl; a.target='_blank'; a.rel='noopener';
+      a.innerHTML='▶ Watch Video';
       document.getElementById('apod-extra').appendChild(a);
     }
-  }catch(e){
-    console.warn('APOD:',e.message);
-    document.getElementById('apod-date-lbl').textContent='';
-    document.getElementById('apod-title').textContent='Astronomy Picture of the Day';
-    document.getElementById('apod-text').textContent='Visit apod.nasa.gov to see today\'s image.';
-    document.getElementById('apod-text').style.cssText='';
-    document.getElementById('apod-note').style.display='block';
+    if(d._fallback){
+      const note = document.createElement('div');
+      note.className='apod-note';
+      note.style.marginTop='.6rem';
+      note.innerHTML='Source: <a href="https://apod.nasa.gov" target="_blank">apod.nasa.gov</a> (direct)';
+      document.getElementById('apod-extra').appendChild(note);
+    }
+  }
+
+  async function tryNASAApi(){
+    const res = await fetch('https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const d = await res.json();
+    if(d.code===429 || d.error) throw new Error('rate_limit');
+    const out = { date:d.date, title:d.title, explanation:d.explanation, copyright:d.copyright };
+    if(d.media_type==='image') out.imgUrl = d.url;
+    else if(d.media_type==='video'){
+      out.videoUrl = d.url;
+      const yt = (d.url||'').match(/(?:youtube\.com\/embed\/|youtu\.be\/)([^?&]+)/);
+      if(yt) out.imgUrl = `https://img.youtube.com/vi/${yt[1]}/hqdefault.jpg`;
+    }
+    return out;
+  }
+
+  async function tryAPODFallback(){
+    // Fetch the APOD webpage HTML via allorigins (no API key, always free)
+    const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://apod.nasa.gov/apod/astropix.html');
+    const res = await fetch(proxyUrl);
+    if(!res.ok) throw new Error('proxy failed');
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    // Title: <title> "APOD: YYYY Month DD - Title Here"
+    const rawTitle = doc.querySelector('title')?.textContent||'';
+    const titleMatch = rawTitle.match(/-\s*(.+)$/);
+    const title = titleMatch ? titleMatch[1].trim() : 'Astronomy Picture of the Day';
+
+    // Date from <title>: "APOD: 2025 March 11 - ..."
+    const dateMatch = rawTitle.match(/(\d{4})\s+(\w+)\s+(\d{1,2})/);
+    let date = new Date().toISOString().split('T')[0];
+    if(dateMatch){
+      const parsed = new Date(`${dateMatch[1]} ${dateMatch[2]} ${dateMatch[3]}`);
+      if(!isNaN(parsed)) date = parsed.toISOString().split('T')[0];
+    }
+
+    // Image: first <img> inside the main content (not icons)
+    let imgUrl = '';
+    for(const img of doc.querySelectorAll('img')){
+      const src = img.getAttribute('src')||'';
+      if(src && !src.includes('icon') && !src.includes('logo') && src.length > 5){
+        imgUrl = src.startsWith('http') ? src : 'https://apod.nasa.gov/apod/' + src;
+        break;
+      }
+    }
+
+    // Explanation: longest <p> text
+    let explanation = '';
+    for(const p of doc.querySelectorAll('p')){
+      const txt = p.textContent.trim().replace(/\s+/g,' ');
+      if(txt.length > explanation.length) explanation = txt;
+    }
+    // Trim to first ~520 chars at a word boundary
+    if(explanation.length > 520){
+      explanation = explanation.slice(0,520).replace(/\s\S*$/, '')+'…';
+    }
+
+    return { date, title, explanation, imgUrl, _fallback:true };
+  }
+
+  try {
+    const d = await tryNASAApi();
+    renderAPOD(d);
+  } catch(e1){
+    console.warn('APOD NASA API failed:', e1.message, '— trying direct fallback');
+    try {
+      const d = await tryAPODFallback();
+      renderAPOD(d);
+    } catch(e2){
+      console.warn('APOD fallback failed:', e2.message);
+      document.getElementById('apod-date-lbl').textContent = '';
+      document.getElementById('apod-title').textContent = 'Astronomy Picture of the Day';
+      document.getElementById('apod-text').textContent = 'Visit apod.nasa.gov to see today\'s picture.';
+      document.getElementById('apod-note').style.display = 'block';
+    }
   }
 })();
 
-/* ═══ NEO FEED ═══════════════════════════════ */
+/* ═══ NEO FEED ═══════════════════════════════
+   1. Try NASA NeoWs DEMO_KEY
+   2. Fallback: JPL Close Approach Data API (no key required)
+      https://ssd-api.jpl.nasa.gov/cad.api
+═══════════════════════════════════════════ */
 (async function(){
-  const grid=document.getElementById('neo-grid');
-  const loading=document.getElementById('neo-loading');
-  const summary=document.getElementById('neo-summary');
-  function fmtD(d){return d.toISOString().split('T')[0];}
-  function ld(km){return (km/384400).toFixed(2);}
-  try{
-    const today=new Date(),end=new Date(today);end.setDate(end.getDate()+7);
-    const url=`https://api.nasa.gov/neo/rest/v1/feed?start_date=${fmtD(today)}&end_date=${fmtD(end)}&api_key=DEMO_KEY`;
-    const res=await fetch(url);
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    if(data.code===429||data.error)throw new Error('rate_limit');
-    const neos=[];
-    for(const[,arr] of Object.entries(data.near_earth_objects||{})){
-      for(const neo of arr){
-        const ca=neo.close_approach_data[0];
-        neos.push({
-          name:neo.name.replace(/[()]/g,'').trim(),
-          date:ca.close_approach_date,
-          distKm:+ca.miss_distance.kilometers,
-          velKmh:+ca.relative_velocity.kilometers_per_hour,
-          diaMin:+neo.estimated_diameter.meters.estimated_diameter_min,
-          diaMax:+neo.estimated_diameter.meters.estimated_diameter_max,
-          hazardous:neo.is_potentially_hazardous_asteroid,
-        });
-      }
-    }
-    neos.sort((a,b)=>new Date(a.date)-new Date(b.date)||a.distKm-b.distKm);
-    const total=neos.length,haz=neos.filter(n=>n.hazardous).length;
-    summary.textContent=`${total} objects tracked · ${haz} potentially hazardous · next 7 days`;
-    loading.style.display='none';
+  const grid    = document.getElementById('neo-grid');
+  const loading = document.getElementById('neo-loading');
+  const summary = document.getElementById('neo-summary');
+  const AU_KM   = 149597870.7;
+  const LD_KM   = 384400;
+
+  function fmtDate(d){ return d.toISOString().split('T')[0]; }
+  function ldStr(km){ return (km/LD_KM).toFixed(2); }
+
+  function renderNEOs(neos, source){
+    const total = neos.length;
+    const haz   = neos.filter(n=>n.hazardous).length;
+    summary.textContent = `${total} objects tracked · ${haz > 0 ? haz+' potentially hazardous · ' : ''}next 7 days${source ? ' · via '+source : ''}`;
+    loading.style.display = 'none';
+
     neos.slice(0,16).forEach(n=>{
-      const card=document.createElement('div');
-      card.className='neo-card-full'+(n.hazardous?' hazardous':'');
-      card.innerHTML=`<div class="neo-name-full">${n.name}</div>
+      const card = document.createElement('div');
+      card.className = 'neo-card-full' + (n.hazardous ? ' hazardous' : '');
+      card.innerHTML = `
+        <div class="neo-name-full">${n.name}</div>
         <div class="neo-row-full"><span class="neo-lbl-full">Approach</span><span class="neo-val-full">${n.date}</span></div>
-        <div class="neo-row-full"><span class="neo-lbl-full">Miss Dist</span><span class="neo-val-full">${ld(n.distKm)} LD</span></div>
+        <div class="neo-row-full"><span class="neo-lbl-full">Miss Dist</span><span class="neo-val-full">${ldStr(n.distKm)} LD</span></div>
         <div class="neo-row-full"><span class="neo-lbl-full">Velocity</span><span class="neo-val-full">${Math.round(n.velKmh).toLocaleString()} km/h</span></div>
         <div class="neo-badge-full ${n.hazardous?'yes':'no'}">${n.hazardous?'⚠ Potentially Hazardous':'✓ Non-Hazardous'}</div>`;
       grid.appendChild(card);
     });
-  }catch(e){
-    console.warn('NEO:',e.message);
-    loading.style.display='none';
-    document.getElementById('neo-note').style.display='block';
+  }
+
+  async function tryNASAApi(){
+    const today = new Date(), end = new Date(today);
+    end.setDate(end.getDate()+7);
+    const url = `https://api.nasa.gov/neo/rest/v1/feed?start_date=${fmtDate(today)}&end_date=${fmtDate(end)}&api_key=DEMO_KEY`;
+    const res  = await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    if(data.code===429 || data.error) throw new Error('rate_limit');
+    const neos = [];
+    for(const [,arr] of Object.entries(data.near_earth_objects||{})){
+      for(const neo of arr){
+        const ca = neo.close_approach_data[0];
+        neos.push({
+          name:      neo.name.replace(/[()]/g,'').trim(),
+          date:      ca.close_approach_date,
+          distKm:    +ca.miss_distance.kilometers,
+          velKmh:    +ca.relative_velocity.kilometers_per_hour,
+          hazardous: neo.is_potentially_hazardous_asteroid,
+        });
+      }
+    }
+    neos.sort((a,b)=>new Date(a.date)-new Date(b.date)||a.distKm-b.distKm);
+    return neos;
+  }
+
+  async function tryJPLFallback(){
+    // JPL Small Body Database Close Approach Data — no API key needed
+    const today = new Date(), end = new Date(today);
+    end.setDate(end.getDate()+7);
+    const url = `https://ssd-api.jpl.nasa.gov/cad.api?dist-max=0.05&date-min=${fmtDate(today)}&date-max=${fmtDate(end)}&sort=dist&limit=20&body=Earth`;
+    const res  = await fetch(url);
+    if(!res.ok) throw new Error('JPL HTTP '+res.status);
+    const data = await res.json();
+
+    // Also fetch PHA (potentially hazardous) list to tag entries
+    const phaRes  = await fetch(`https://ssd-api.jpl.nasa.gov/cad.api?dist-max=0.05&date-min=${fmtDate(today)}&date-max=${fmtDate(end)}&pha=true&body=Earth`);
+    const phaData = phaRes.ok ? await phaRes.json() : {data:[]};
+    const phaNames = new Set((phaData.data||[]).map(r=>r[0]));
+
+    const fields = data.fields;
+    const iDes  = fields.indexOf('des');
+    const iCd   = fields.indexOf('cd');    // "2025-Mar-11 14:22"
+    const iDist = fields.indexOf('dist');  // AU
+    const iVrel = fields.indexOf('v_rel'); // km/s
+
+    const neos = (data.data||[]).map(row => {
+      // Parse JPL date "2025-Mar-11 14:22" → "2025-03-11"
+      const cdRaw = row[iCd]||'';
+      let date = cdRaw.split(' ')[0]; // "2025-Mar-11"
+      const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+      date = date.replace(/-([A-Za-z]+)-/,(_,m)=>`-${months[m]||'01'}-`);
+      return {
+        name:      row[iDes],
+        date,
+        distKm:    parseFloat(row[iDist]) * AU_KM,
+        velKmh:    parseFloat(row[iVrel]) * 3600,
+        hazardous: phaNames.has(row[iDes]),
+      };
+    });
+    neos.sort((a,b)=>new Date(a.date)-new Date(b.date)||a.distKm-b.distKm);
+    return neos;
+  }
+
+  try {
+    const neos = await tryNASAApi();
+    renderNEOs(neos, 'NASA NeoWs');
+  } catch(e1){
+    console.warn('NEO NASA API failed:', e1.message, '— trying JPL fallback');
+    try {
+      const neos = await tryJPLFallback();
+      renderNEOs(neos, 'JPL SBDB');
+    } catch(e2){
+      console.warn('NEO JPL fallback failed:', e2.message);
+      loading.style.display = 'none';
+      document.getElementById('neo-note').style.display = 'block';
+    }
   }
 })();
 
