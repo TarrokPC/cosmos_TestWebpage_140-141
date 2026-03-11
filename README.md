@@ -57,7 +57,7 @@ All NASA public APIs are used with `DEMO_KEY`, which allows ~30 requests/hour pe
 
 1. Visit [https://api.nasa.gov](https://api.nasa.gov)
 2. Fill in the sign-up form — instant approval, no payment required
-3. In `cosmos_v4.html`, search for `DEMO_KEY` (two occurrences) and replace with your key
+3. In `cosmos.html`, search for `DEMO_KEY` (two occurrences) and replace with your key
 
 ```js
 // APOD — around line 1077
@@ -75,7 +75,7 @@ The entire site is a single HTML file with no build step.
 
 **GitHub Pages**
 ```
-1. Push cosmos_v4.html to your repo (rename to index.html if desired)
+1. Push cosmos.html to your repo (rename to index.html if desired)
 2. Settings → Pages → Source: main branch / root
 3. Done — live at https://yourusername.github.io/your-repo
 ```
@@ -86,7 +86,7 @@ Drop the file in, point the host at it. No configuration needed.
 **Local**
 ```bash
 # Any of these work:
-open cosmos_v4.html
+open cosmos.html
 python3 -m http.server 8080
 npx serve .
 ```
