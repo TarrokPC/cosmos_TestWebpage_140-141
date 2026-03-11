@@ -1,6 +1,6 @@
 # COSMOS — Interactive Space Exploration Hub
 
-A single-file, interactive space exploration website. No build tools, no dependencies to install — just open `cosmos_v4.html` in a browser or drop it on any static host.
+A single-file, interactive space exploration website. No build tools, no dependencies to install — just open `cosmos.html` in a browser or drop it on any static host.
 
 ![COSMOS Screenshot](https://apod.nasa.gov/apod/image/2506/MilkyWayArch_Horalek_1080.jpg)
 
