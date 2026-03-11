@@ -1246,22 +1246,23 @@ document.querySelectorAll('.nav-dot')[0]?.classList.add('active');
   }
 
   async function tryJPLFallback(){
-    // JPL SBDB Close Approach API — no key needed, but max 1 concurrent request
+    // JPL SBDB Close Approach API — no CORS headers, so we route through allorigins proxy
+    const proxy = u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u);
     const today = new Date(), end = new Date(today);
     end.setDate(end.getDate()+7);
     const base = `https://ssd-api.jpl.nasa.gov/cad.api?neo=true&date-min=${fmtDate(today)}&date-max=${fmtDate(end)}&dist-max=0.05&sort=date&limit=30`;
 
     // Request 1: all NEO close approaches in window
-    const res = await fetch(base);
+    const res = await fetch(proxy(base));
     if(!res.ok) throw new Error('JPL HTTP '+res.status);
     const data = await res.json();
     if(!data.data || !data.fields) throw new Error('JPL: unexpected response shape');
 
-    // Request 2: PHAs only — sequential (JPL rejects concurrent calls)
-    await new Promise(r => setTimeout(r, 400)); // small gap
-    const phaRes  = await fetch(base + '&pha=true');
+    // Request 2: PHAs only — sequential (small gap to avoid concurrent request rejection)
+    await new Promise(r => setTimeout(r, 400));
+    const phaRes  = await fetch(proxy(base + '&pha=true'));
     const phaData = phaRes.ok ? await phaRes.json() : { data: [] };
-    const phaSet  = new Set((phaData.data||[]).map(r => r[0])); // set of des strings
+    const phaSet  = new Set((phaData.data||[]).map(r => r[0]));
 
     // Locate fields by name (order can vary between API versions)
     const f     = data.fields;
